@@ -387,3 +387,178 @@ func TestASSFieldsParsing(t *testing.T) {
 		}
 	}
 }
+
+func TestASSDecodePreservesMetadata(t *testing.T) {
+	input := "\uFEFF" + `[Script Info]
+Title: Keep me
+PlayResX: 1920
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize
+Style: Default,Arial,20
+Style: Sign,Bold,30
+
+[Fonts]
+fontname: demo.ttf
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 2,0:00:01.00,0:00:02.00,Sign,Alice,10,20,30,scroll up,Hello, World
+`
+
+	sub, err := (assFormat{}).Decode(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if sub.ASS == nil {
+		t.Fatal("ASS metadata missing")
+	}
+	if sub.ASS.Header != "\uFEFF" {
+		t.Errorf("header = %q, want a BOM", sub.ASS.Header)
+	}
+	if !sub.ASS.hasSection("Script Info") || !sub.ASS.hasSection("Fonts") {
+		t.Errorf("sections = %+v, want Script Info and Fonts", sub.ASS.Sections)
+	}
+	if got, want := sub.ASS.Styles, []string{"Default", "Sign"}; !slicesEqual(got, want) {
+		t.Errorf("styles = %v, want %v", got, want)
+	}
+	if sub.ASS.EventFormat != "Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text" {
+		t.Errorf("event format = %q", sub.ASS.EventFormat)
+	}
+
+	event := sub.Events[0]
+	if event.ASS == nil {
+		t.Fatal("event ASS fields missing")
+	}
+	if style, _ := event.ASS.Value("style"); style != "Sign" {
+		t.Errorf("style = %q, want Sign", style)
+	}
+	if name, _ := event.ASS.Value("name"); name != "Alice" {
+		t.Errorf("name = %q, want Alice", name)
+	}
+	if layer, _ := event.ASS.Value("layer"); layer != "2" {
+		t.Errorf("layer = %q, want 2", layer)
+	}
+	if event.Text != "Hello, World" {
+		t.Errorf("text = %q, want %q", event.Text, "Hello, World")
+	}
+
+	// Re-encoding keeps every section and the original dialogue fields.
+	var buf bytes.Buffer
+	if err := (assFormat{}).Encode(&buf, sub); err != nil {
+		t.Fatalf("encode error: %v", err)
+	}
+	output := buf.String()
+	for _, want := range []string{
+		"\uFEFF[Script Info]",
+		"Title: Keep me",
+		"PlayResX: 1920",
+		"Style: Sign,Bold,30",
+		"[Fonts]",
+		"fontname: demo.ttf",
+		"Dialogue: 2,0:00:01.00,0:00:02.00,Sign,Alice,10,20,30,scroll up,Hello, World",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("output missing %q:\n%s", want, output)
+		}
+	}
+}
+
+func TestASSDecodeKeepsNonDefaultFormatOrder(t *testing.T) {
+	input := `[Events]
+Format: Start, End, Text, Style
+Dialogue: 0:00:01.00,0:00:02.00,Hello,Sign
+`
+	sub, err := (assFormat{}).Decode(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if len(sub.Events) != 1 {
+		t.Fatalf("got %d events, want 1", len(sub.Events))
+	}
+	if sub.Events[0].Text != "Hello" {
+		t.Errorf("text = %q, want Hello", sub.Events[0].Text)
+	}
+
+	var buf bytes.Buffer
+	if err := (assFormat{}).Encode(&buf, sub); err != nil {
+		t.Fatalf("encode error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Format: Start, End, Text, Style") {
+		t.Errorf("format line not preserved:\n%s", buf.String())
+	}
+	if !strings.Contains(buf.String(), "Dialogue: 0:00:01.00,0:00:02.00,Hello,Sign") {
+		t.Errorf("dialogue line not preserved:\n%s", buf.String())
+	}
+}
+
+func TestShiftsPreserveASSFields(t *testing.T) {
+	event := Event{
+		Start: time.Second,
+		End:   2 * time.Second,
+		Text:  "Hello",
+		ASS:   &ASSEvent{Fields: []ASSField{{Name: "style", Value: "Sign"}}},
+	}
+	sub := Subtitle{Events: []Event{event}, ASS: &ASSMetadata{Styles: []string{"Sign"}}}
+
+	for name, got := range map[string]Subtitle{
+		"shift":      sub.Shift(time.Second, true),
+		"stretch":    sub.Stretch(2, 0),
+		"remove hi":  sub.RemoveHI(),
+		"remove ids": sub.RemoveIds(nil),
+	} {
+		if got.Events[0].ASS == nil {
+			t.Errorf("%s: ASS fields dropped", name)
+		}
+		if got.ASS == nil {
+			t.Errorf("%s: ASS metadata dropped", name)
+		}
+	}
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestDeclaredStylesWithoutFormatLine(t *testing.T) {
+	input := `[V4+ Styles]
+Style: First,Arial,20
+Style: Second,Arial,20
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:01.00,0:00:02.00,Second,,0,0,0,,Hello
+`
+	sub, err := (assFormat{}).Decode(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got, want := sub.ASS.Styles, []string{"First", "Second"}; !slicesEqual(got, want) {
+		t.Errorf("styles = %v, want %v", got, want)
+	}
+}
+
+func TestASSEncodeUsesPreservedEventsFormat(t *testing.T) {
+	input := `[Events]
+Format: Start, End, Text, Style
+`
+	sub, err := (assFormat{}).Decode(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := (assFormat{}).Encode(&buf, sub); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Format: Start, End, Text, Style") {
+		t.Errorf("events format not preserved:\n%s", buf.String())
+	}
+}

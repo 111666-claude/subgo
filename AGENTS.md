@@ -4,6 +4,7 @@
 
 - The root package is the public subtitle library. Start with [subtitle.go](subtitle.go) for the `Event` and `Subtitle` model and immutable-style transformations.
 - [format.go](format.go) owns the `Format` interface, extension-based format detection, and file loading/saving.
+- [slice.go](slice.go) implements clip export: boundary clipping, rebasing to zero, and ASS animation tag retiming.
 - [srt.go](srt.go), [ass.go](ass.go), [vtt.go](vtt.go), and [sbv.go](sbv.go) implement the supported codecs. Keep concrete format types unexported and register them in `format.go`.
 - [cmd/subgo/main.go](cmd/subgo/main.go) is the Cobra CLI boundary. It loads, applies operations, and saves; library behavior belongs in the root package.
 
@@ -32,6 +33,8 @@ CI also uses `golangci-lint` with [.golangci.yml](.golangci.yml)
 - CLI operations run in this order: remove IDs, trim, shift, stretch, then remove hearing-impaired annotations.
 - `RemoveIds` accepts 1-based event indices.
 - ASS encoding uses centiseconds, so round-trip timestamps can lose sub-centisecond precision.
+- ASS/SSA decoding attaches script metadata to `Subtitle.ASS` and dialogue fields to `Event.ASS`; transformations and `Slice` carry them through so a clip keeps its styles.
+- `Slice` clips events to `[start, end)` and rebases to zero. It never restarts a head-clipped `\move`, and reports unsafe tags instead of silently mis-timing them.
 - ASS and VTT skip malformed cues, while SRT and SBV return an error for malformed timing.
 - `Save` creates or truncates the destination before encoding completes; consider this when changing file I/O.
 

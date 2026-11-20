@@ -16,17 +16,25 @@ type Event struct {
 	Start time.Duration
 	End   time.Duration
 	Text  string
+
+	// ASS holds the non-timing ASS/SSA dialogue fields when the event was decoded
+	// from an ASS/SSA file. It is nil for other formats.
+	ASS *ASSEvent
 }
 
 // Subtitle is a collection of events.
 type Subtitle struct {
 	Events []Event
+
+	// ASS holds ASS/SSA script information and style names when the subtitle was
+	// decoded from an ASS/SSA file. It is nil for other formats.
+	ASS *ASSMetadata
 }
 
 // Shift returns a new Subtitle with all events shifted by delta.
 // If clamp is true, negative times are clamped to zero.
 func (s Subtitle) Shift(delta time.Duration, clamp bool) Subtitle {
-	out := Subtitle{Events: make([]Event, len(s.Events))}
+	out := Subtitle{Events: make([]Event, len(s.Events)), ASS: s.ASS}
 	for i, e := range s.Events {
 		start := e.Start + delta
 		end := e.End + delta
@@ -42,6 +50,7 @@ func (s Subtitle) Shift(delta time.Duration, clamp bool) Subtitle {
 			Start: start,
 			End:   end,
 			Text:  e.Text,
+			ASS:   e.ASS,
 		}
 	}
 	return out
@@ -50,7 +59,7 @@ func (s Subtitle) Shift(delta time.Duration, clamp bool) Subtitle {
 // Stretch returns a new Subtitle with all times scaled around an anchor.
 // newT = (t - anchor) * factor + anchor.
 func (s Subtitle) Stretch(factor float64, anchor time.Duration) Subtitle {
-	out := Subtitle{Events: make([]Event, len(s.Events))}
+	out := Subtitle{Events: make([]Event, len(s.Events)), ASS: s.ASS}
 	for i, e := range s.Events {
 		start := time.Duration(float64(e.Start-anchor)*factor) + anchor
 		end := time.Duration(float64(e.End-anchor)*factor) + anchor
@@ -58,6 +67,7 @@ func (s Subtitle) Stretch(factor float64, anchor time.Duration) Subtitle {
 			Start: start,
 			End:   end,
 			Text:  e.Text,
+			ASS:   e.ASS,
 		}
 	}
 	return out
@@ -76,7 +86,7 @@ func (s Subtitle) RemoveIds(ids []uint) Subtitle {
 			events = append(events, e)
 		}
 	}
-	return Subtitle{Events: events}
+	return Subtitle{Events: events, ASS: s.ASS}
 }
 
 // TrimFirst removes the first n events.
@@ -85,9 +95,9 @@ func (s Subtitle) TrimFirst(n int) Subtitle {
 		return s
 	}
 	if n >= len(s.Events) {
-		return Subtitle{}
+		return Subtitle{ASS: s.ASS}
 	}
-	out := Subtitle{Events: make([]Event, len(s.Events)-n)}
+	out := Subtitle{Events: make([]Event, len(s.Events)-n), ASS: s.ASS}
 	copy(out.Events, s.Events[n:])
 	return out
 }
@@ -98,9 +108,9 @@ func (s Subtitle) TrimLast(n int) Subtitle {
 		return s
 	}
 	if n >= len(s.Events) {
-		return Subtitle{}
+		return Subtitle{ASS: s.ASS}
 	}
-	out := Subtitle{Events: make([]Event, len(s.Events)-n)}
+	out := Subtitle{Events: make([]Event, len(s.Events)-n), ASS: s.ASS}
 	copy(out.Events, s.Events[:len(s.Events)-n])
 	return out
 }
@@ -113,7 +123,7 @@ func (s Subtitle) TrimBefore(t time.Duration) Subtitle {
 			events = append(events, e)
 		}
 	}
-	return Subtitle{Events: events}
+	return Subtitle{Events: events, ASS: s.ASS}
 }
 
 // TrimAfter removes all events that start after the given timestamp.
@@ -124,7 +134,7 @@ func (s Subtitle) TrimAfter(t time.Duration) Subtitle {
 			events = append(events, e)
 		}
 	}
-	return Subtitle{Events: events}
+	return Subtitle{Events: events, ASS: s.ASS}
 }
 
 // RemoveHI removes hearing impaired annotations like (sobbing) or [loud noise] and
@@ -155,8 +165,9 @@ func (s Subtitle) RemoveHI() Subtitle {
 				Start: e.Start,
 				End:   e.End,
 				Text:  text,
+				ASS:   e.ASS,
 			})
 		}
 	}
-	return Subtitle{Events: events}
+	return Subtitle{Events: events, ASS: s.ASS}
 }
